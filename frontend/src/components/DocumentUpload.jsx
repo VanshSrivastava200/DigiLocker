@@ -1,22 +1,23 @@
 import React, { useState } from 'react';
-import pinataService from '../services/pinataService';
+import documentService from '../services/documentService';
 
-const DocumentUpload = ({ did, onUploadSuccess }) => {
+const DocumentUpload = ({ user, onUploadSuccess }) => {
   const [file, setFile] = useState(null);
   const [documentType, setDocumentType] = useState('');
   const [description, setDescription] = useState('');
   const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState(null);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
     if (selectedFile) {
-      // Check file size (max 10MB)
       if (selectedFile.size > 10 * 1024 * 1024) {
-        alert('File size must be less than 10MB');
+        setError('File size must be less than 10MB');
         return;
       }
       setFile(selectedFile);
+      setError('');
     }
   };
 
@@ -24,76 +25,42 @@ const DocumentUpload = ({ did, onUploadSuccess }) => {
     e.preventDefault();
     
     if (!file) {
-      alert('Please select a file');
+      setError('Please select a file');
       return;
     }
 
     if (!documentType) {
-      alert('Please select document type');
-      return;
-    }
-
-    if (!did) {
-      alert('Please generate a DID first');
+      setError('Please select document type');
       return;
     }
 
     setUploading(true);
-    setUploadResult(null);
+    setError('');
+    setSuccess('');
 
     try {
-      // Create metadata
-      const metadata = {
-        did: did,
-        documentType: documentType,
-        description: description,
-        uploadedFrom: 'digilocker-frontend'
-      };
+      const formData = new FormData();
+      formData.append('document', file);
+      formData.append('documentType', documentType);
+      formData.append('description', description);
 
-      // Upload to Pinata
-      const result = await pinataService.uploadFile(file, file.name, metadata);
-
+      const result = await documentService.uploadDocument(formData);
+      
       if (result.success) {
-        setUploadResult(result);
-        
-        // Store document info in localStorage (temporary solution)
-        const documentInfo = {
-          id: Date.now(),
-          did: did,
-          fileName: file.name,
-          fileSize: file.size,
-          fileType: file.type,
-          documentType: documentType,
-          description: description,
-          ipfsHash: result.ipfsHash,
-          gatewayURL: result.gatewayURL,
-          uploadedAt: new Date().toISOString(),
-          verified: false
-        };
-
-        // Save to localStorage
-        const existingDocuments = JSON.parse(localStorage.getItem('userDocuments') || '[]');
-        existingDocuments.push(documentInfo);
-        localStorage.setItem('userDocuments', JSON.stringify(existingDocuments));
-
-        // Call success callback
-        if (onUploadSuccess) {
-          onUploadSuccess(documentInfo);
-        }
-
-        alert('Document uploaded successfully to IPFS!');
-        
-        // Reset form
+        setSuccess('Document uploaded successfully!');
         setFile(null);
         setDocumentType('');
         setDescription('');
         e.target.reset();
+        
+        if (onUploadSuccess) {
+          onUploadSuccess(result.document);
+        }
       } else {
-        alert(`Upload failed: ${result.error}`);
+        setError(result.error || 'Upload failed');
       }
-    } catch (error) {
-      console.error('Upload error:', error);
-      alert('Upload failed. Please try again.');
+    } catch (err) {
+      setError(err.message || 'Upload failed. Please try again.');
     } finally {
       setUploading(false);
     }
@@ -101,12 +68,24 @@ const DocumentUpload = ({ did, onUploadSuccess }) => {
 
   return (
     <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-      <h2 className="text-xl font-semibold mb-4">Upload Document to IPFS</h2>
+      <h2 className="text-xl font-semibold mb-4">Upload Document</h2>
       
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md mb-4">
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="bg-green-50 border border-green-200 text-green-600 px-4 py-3 rounded-md mb-4">
+          {success}
+        </div>
+      )}
+
       <form onSubmit={handleUpload} className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Document Type
+            Document Type *
           </label>
           <select
             value={documentType}
@@ -139,7 +118,7 @@ const DocumentUpload = ({ did, onUploadSuccess }) => {
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Select File (Max 10MB)
+            Select File (Max 10MB) *
           </label>
           <input
             type="file"
@@ -157,32 +136,12 @@ const DocumentUpload = ({ did, onUploadSuccess }) => {
 
         <button
           type="submit"
-          disabled={uploading || !did}
+          disabled={uploading}
           className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed"
         >
           {uploading ? 'Uploading to IPFS...' : 'Upload Document'}
         </button>
       </form>
-
-      {uploadResult && (
-        <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-md">
-          <h3 className="text-green-800 font-semibold">Upload Successful!</h3>
-          <p className="text-green-700 text-sm mt-1">
-            IPFS Hash: <code className="bg-green-100 px-1 rounded">{uploadResult.ipfsHash}</code>
-          </p>
-          <p className="text-green-700 text-sm">
-            File Size: {(uploadResult.pinSize / 1024).toFixed(2)} KB
-          </p>
-          <a
-            href={uploadResult.gatewayURL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-600 hover:text-blue-800 text-sm underline mt-2 inline-block"
-          >
-            View on IPFS Gateway
-          </a>
-        </div>
-      )}
     </div>
   );
 };

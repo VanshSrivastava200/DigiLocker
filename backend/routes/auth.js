@@ -2,14 +2,120 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const { generateToken } = require('../middleware/auth');
-const { isValidAddress } = require('../utils/blockchain');
+const { generateDID, isValidAddress } = require('../utils/blockchain');
 
-// @desc    Register/Authenticate user with wallet
-// @route   POST /api/auth/login
-// @access  Public
-router.post('/login', async (req, res) => {
+// Register with email/password
+router.post('/register', async (req, res) => {
   try {
-    const { walletAddress, username, email } = req.body;
+    const { email, password, username, fullName } = req.body;
+
+    if (!email || !password || !username) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email, password, and username are required'
+      });
+    }
+
+    const existingUser = await User.findByEmail(email);
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        error: 'User with this email already exists'
+      });
+    }
+
+    const did = generateDID(email);
+    const user = await User.create({
+      email: email.toLowerCase(),
+      password,
+      username,
+      fullName,
+      did,
+      authMethod: 'email',
+      lastLogin: new Date()
+    });
+
+    const token = generateToken(user._id);
+
+    res.status(201).json({
+      success: true,
+      token,
+      message: 'Registration successful',
+      user: {
+        id: user._id,
+        email: user.email,
+        username: user.username,
+        fullName: user.fullName,
+        did: user.did,
+        authMethod: user.authMethod
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Registration failed: ' + error.message
+    });
+  }
+});
+
+// Login with email/password
+router.post('/email-login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email and password are required'
+      });
+    }
+
+    const user = await User.findByEmail(email);
+    if (!user || user.authMethod !== 'email') {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid email or password'
+      });
+    }
+
+    const isPasswordValid = await user.comparePassword(password);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid email or password'
+      });
+    }
+
+    user.lastLogin = new Date();
+    await user.save();
+
+    const token = generateToken(user._id);
+
+    res.json({
+      success: true,
+      token,
+      message: 'Login successful',
+      user: {
+        id: user._id,
+        email: user.email,
+        username: user.username,
+        fullName: user.fullName,
+        did: user.did,
+        authMethod: user.authMethod
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Login failed: ' + error.message
+    });
+  }
+});
+
+// Wallet login
+router.post('/wallet-login', async (req, res) => {
+  try {
+    const { walletAddress, username } = req.body;
 
     if (!walletAddress) {
       return res.status(400).json({
@@ -18,124 +124,71 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Validate wallet address format
     if (!isValidAddress(walletAddress)) {
       return res.status(400).json({
         success: false,
-        error: 'Invalid wallet address format. Must be 0x followed by 40 hex characters.'
+        error: 'Invalid wallet address format'
       });
     }
 
-    // Find or create user
     let user = await User.findByWallet(walletAddress);
 
     if (user) {
-      // Update user info if provided
-      if (username) user.username = username;
-      if (email) user.email = email;
       user.lastLogin = new Date();
       await user.save();
     } else {
-      // Create new user
+      const did = generateDID(walletAddress);
       user = await User.create({
-        walletAddress,
-        username,
-        email,
+        walletAddress: walletAddress.toLowerCase(),
+        username: username || `user_${walletAddress.slice(2, 10)}`,
+        did,
+        authMethod: 'wallet',
         lastLogin: new Date()
       });
     }
 
-    // Generate token
     const token = generateToken(user._id);
 
-    res.status(200).json({
+    res.json({
       success: true,
       token,
+      message: 'Wallet login successful',
       user: {
         id: user._id,
         walletAddress: user.walletAddress,
-        did: user.did,
         username: user.username,
-        email: user.email,
-        profileImage: user.profileImage,
-        lastLogin: user.lastLogin,
-        createdAt: user.createdAt
+        did: user.did,
+        authMethod: user.authMethod
       }
     });
   } catch (error) {
-    console.error('Auth error:', error);
     res.status(500).json({
       success: false,
-      error: 'Server error during authentication: ' + error.message
+      error: 'Wallet login failed: ' + error.message
     });
   }
 });
 
-// @desc    Get current user profile
-// @route   GET /api/auth/me
-// @access  Private
+// Get user profile
 router.get('/me', require('../middleware/auth').protect, async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
-
     res.json({
       success: true,
       user: {
         id: user._id,
         walletAddress: user.walletAddress,
-        did: user.did,
-        username: user.username,
         email: user.email,
-        profileImage: user.profileImage,
-        createdAt: user.createdAt,
-        lastLogin: user.lastLogin
+        username: user.username,
+        fullName: user.fullName,
+        did: user.did,
+        authMethod: user.authMethod
       }
     });
   } catch (error) {
-    console.error('Get profile error:', error);
     res.status(500).json({
       success: false,
-      error: 'Server error fetching profile'
-    });
-  }
-});
-
-// @desc    Update user profile
-// @route   PUT /api/auth/profile
-// @access  Private
-router.put('/profile', require('../middleware/auth').protect, async (req, res) => {
-  try {
-    const { username, email, profileImage } = req.body;
-
-    const user = await User.findByIdAndUpdate(
-      req.user.id,
-      {
-        username,
-        email,
-        profileImage
-      },
-      {
-        new: true,
-        runValidators: true
-      }
-    );
-
-    res.json({
-      success: true,
-      user: {
-        id: user._id,
-        walletAddress: user.walletAddress,
-        did: user.did,
-        username: user.username,
-        email: user.email,
-        profileImage: user.profileImage
-      }
-    });
-  } catch (error) {
-    console.error('Update profile error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Server error updating profile'
+      error: 'Failed to get profile'
     });
   }
 });

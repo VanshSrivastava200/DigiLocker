@@ -33,8 +33,7 @@ const documentSchema = new mongoose.Schema({
   },
   ipfsHash: {
     type: String,
-    required: true,
-    unique: true
+    required: true
   },
   ipfsURL: {
     type: String,
@@ -62,29 +61,8 @@ const documentSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Indexes for better query performance
 documentSchema.index({ user: 1, createdAt: -1 });
 documentSchema.index({ did: 1 });
 documentSchema.index({ ipfsHash: 1 });
-documentSchema.index({ documentType: 1 });
-documentSchema.index({ isVerified: 1 });
-
-// Static method to find documents by DID
-documentSchema.statics.findByDID = function(did) {
-  return this.find({ did }).populate('user', 'walletAddress username').sort({ createdAt: -1 });
-};
-
-// Static method to find documents by user
-documentSchema.statics.findByUser = function(userId) {
-  return this.find({ user: userId }).sort({ createdAt: -1 });
-};
-
-// Instance method to verify document
-documentSchema.methods.verify = function(verifiedBy) {
-  this.isVerified = true;
-  this.verifiedBy = verifiedBy;
-  this.verifiedAt = new Date();
-  return this.save();
-};
 
 module.exports = mongoose.model('Document', documentSchema);

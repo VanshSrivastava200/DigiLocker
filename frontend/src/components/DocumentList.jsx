@@ -1,46 +1,52 @@
 import React, { useState, useEffect } from 'react';
-import pinataService from '../services/pinataService';
+import documentService from '../services/documentService';
 
-const DocumentList = ({ did }) => {
+const DocumentList = ({ user, refresh }) => {
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     loadDocuments();
-  }, [did]);
+  }, [user, refresh]);
 
-  const loadDocuments = () => {
+  const loadDocuments = async () => {
     try {
-      const storedDocuments = JSON.parse(localStorage.getItem('userDocuments') || '[]');
-      const userDocuments = did 
-        ? storedDocuments.filter(doc => doc.did === did)
-        : storedDocuments;
-      setDocuments(userDocuments);
-    } catch (error) {
-      console.error('Error loading documents:', error);
-      setDocuments([]);
+      setLoading(true);
+      const result = await documentService.getMyDocuments();
+      if (result.success) {
+        setDocuments(result.documents);
+      } else {
+        setError(result.error);
+      }
+    } catch (err) {
+      setError('Failed to load documents');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDownload = async (document) => {
-    try {
-      const result = await pinataService.downloadFile(document.ipfsHash, document.fileName);
-      if (!result.success) {
-        alert('Download failed: ' + result.error);
+  const handleDelete = async (documentId) => {
+    if (window.confirm('Are you sure you want to delete this document?')) {
+      try {
+        const result = await documentService.deleteDocument(documentId);
+        if (result.success) {
+          setDocuments(documents.filter(doc => doc._id !== documentId));
+        } else {
+          setError(result.error);
+        }
+      } catch (err) {
+        setError('Failed to delete document');
       }
-    } catch (error) {
-      alert('Download failed. Please try again.');
     }
   };
 
-  const handleDelete = (documentId) => {
-    if (window.confirm('Are you sure you want to delete this document?')) {
-      const updatedDocuments = documents.filter(doc => doc.id !== documentId);
-      setDocuments(updatedDocuments);
-      localStorage.setItem('userDocuments', JSON.stringify(updatedDocuments));
-    }
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
   if (loading) {
@@ -61,6 +67,12 @@ const DocumentList = ({ did }) => {
     <div className="bg-white rounded-lg shadow-md p-6">
       <h2 className="text-xl font-semibold mb-4">Your Documents</h2>
       
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md mb-4">
+          {error}
+        </div>
+      )}
+
       {documents.length === 0 ? (
         <p className="text-gray-500 text-center py-8">
           No documents found. Upload your first document to get started.
@@ -68,7 +80,7 @@ const DocumentList = ({ did }) => {
       ) : (
         <div className="space-y-4">
           {documents.map((document) => (
-            <div key={document.id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50">
+            <div key={document._id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50">
               <div className="flex justify-between items-start">
                 <div className="flex-1">
                   <h3 className="font-semibold text-lg">{document.fileName}</h3>
@@ -78,13 +90,17 @@ const DocumentList = ({ did }) => {
                   )}
                   <div className="mt-2 flex flex-wrap gap-2 text-xs">
                     <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                      {(document.fileSize / 1024 / 1024).toFixed(2)} MB
+                      {formatFileSize(document.fileSize)}
                     </span>
-                    <span className="bg-green-100 text-green-800 px-2 py-1 rounded">
-                      {document.verified ? 'Verified' : 'Unverified'}
+                    <span className={`px-2 py-1 rounded ${
+                      document.isVerified 
+                        ? 'bg-green-100 text-green-800' 
+                        : 'bg-yellow-100 text-yellow-800'
+                    }`}>
+                      {document.isVerified ? 'Verified' : 'Unverified'}
                     </span>
                     <span className="bg-gray-100 text-gray-800 px-2 py-1 rounded">
-                      {new Date(document.uploadedAt).toLocaleDateString()}
+                      {new Date(document.createdAt).toLocaleDateString()}
                     </span>
                   </div>
                   <p className="text-xs text-gray-400 mt-2 break-all">
@@ -93,36 +109,21 @@ const DocumentList = ({ did }) => {
                 </div>
                 
                 <div className="flex space-x-2 ml-4">
-                  <button
-                    onClick={() => handleDownload(document)}
+                  <a
+                    href={document.ipfsURL}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600"
                   >
-                    Download
-                  </button>
+                    View
+                  </a>
                   <button
-                    onClick={() => handleDelete(document.id)}
+                    onClick={() => handleDelete(document._id)}
                     className="bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600"
                   >
                     Delete
                   </button>
                 </div>
-              </div>
-              
-              <div className="mt-3 flex space-x-2">
-                <a
-                  href={document.gatewayURL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 hover:text-blue-800 text-sm underline"
-                >
-                  View on IPFS
-                </a>
-                <button
-                  onClick={() => navigator.clipboard.writeText(document.ipfsHash)}
-                  className="text-gray-600 hover:text-gray-800 text-sm underline"
-                >
-                  Copy IPFS Hash
-                </button>
               </div>
             </div>
           ))}
